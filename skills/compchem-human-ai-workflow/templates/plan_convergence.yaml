@@ -1,0 +1,67 @@
+# 収束試験型の計画（VASP）。題材：H 吸着エネルギーの ENCUT 収束。
+# 構造は固定し（別の試行で緩和した最終構造）、1 つのパラメータだけを振って 1 点計算する。
+# 収束は絶対エネルギーではなく、求めたいエネルギー差で判断する。
+
+type: convergence
+purpose: >-
+  Pt(111) fcc への H 吸着エネルギー（½H2 基準）が、ENCUT に対してどれだけ動くかを調べ、
+  本計算に使う ENCUT を決める。
+
+caveats:
+  - 構造は ENCUT=500 eV で緩和したものに固定している。ENCUT による構造の変化は含まない。
+  - k 点は 6×6×1 に固定。k 点の収束は別の試行で調べる。
+
+resources:
+  account: <your-account>  # Slurm のアカウント名（クラスタに合わせて書き換える）
+  partition: <partition>
+  qos: <qos>
+  ntasks: 24
+  time: "01:00:00"
+
+method:
+  xc: PBE
+  setups: minimal
+  prec: Accurate
+  ediff: 1.0e-7
+  nelm: 200
+  algo: Normal
+  lreal: false
+  lasph: true
+  ismear: 0
+  sigma: 0.05
+  gamma: true
+  isym: 0
+  ispin: 1
+  lwave: false
+  lcharg: false
+
+steps:
+  static: {ibrion: -1, nsw: 0}
+
+scan: # 振るパラメータ。systems の各系が、値ごとの系（<系>__encut-<値>）に展開される
+  key: encut
+  values: [400, 450, 500, 550, 600, 700] # eV。反応式の全項で同じ値を振る
+  systems: [pt111, pt111_h_fcc, h2]
+
+systems:
+  pt111:
+    role: 清浄表面（固定構造）
+    build: {recipe: from_file, path: ../261020_energy-checks/runs/pt111/static/final.extxyz}
+    steps: [static]
+    params: {kpts: [6, 6, 1], ldipol: true, idipol: 3, dipol: [0.5, 0.5, 0.5], lmaxmix: 4}
+  pt111_h_fcc:
+    role: 吸着状態（固定構造）
+    build: {recipe: from_file, path: ../261020_energy-checks/runs/pt111_h_fcc/static/final.extxyz}
+    steps: [static]
+    params: {kpts: [6, 6, 1], ldipol: true, idipol: 3, dipol: [0.5, 0.5, 0.5], lmaxmix: 4}
+  h2:
+    role: ½H2 の参照（固定構造）
+    build: {recipe: from_file, path: ../261020_energy-checks/runs/h2/static/final.extxyz}
+    steps: [static]
+    params: {kpts: [1, 1, 1]}
+
+results:
+  adsorption_h_half_h2:
+    recipe: linear_combination
+    terms: {pt111_h_fcc: 1, pt111: -1, h2: -0.5}
+    meaning: 値ごとの吸着エネルギー。最大の ENCUT との差が目標（例：0.01 eV）以下になる値を選ぶ

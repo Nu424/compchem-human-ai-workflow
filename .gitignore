@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+
+# Python（テンプレートの動作確認で生じるもの）
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# テンプレートの試し実行で生じる計算出力
+runs/
+results/
+*.db
+*.traj
+slurm-*.out

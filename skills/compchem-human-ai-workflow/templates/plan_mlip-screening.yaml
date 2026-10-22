@@ -1,0 +1,45 @@
+# MLIP によるスクリーニング型の計画。題材：Pt(111) 上の H の吸着サイト比較。
+# MLIP で候補を安く比べ、DFT で確かめるサイトを絞る。結果は ase.db（results/results.db）に保存する。
+# 単位：長さ Å、エネルギー eV、力 eV/Å。
+
+type: mlip-screening
+purpose: >-
+  Pt(111) 2×2 の ontop / bridge / fcc / hcp サイトに H を置いて緩和し、½H2 基準の吸着エネルギーを比べて、
+  DFT で確かめるサイトを選ぶ。
+
+caveats:
+  - 汎用 MLIP は PBE のデータで学習しているため、PBE の誤差傾向を引き継ぐ。値は DFT で確かめる前提の目安。
+  - 気相の H2 は MLIP が苦手なことがある。参照の H2 は DFT の値と比べて確認する。
+  - EMT は動作確認用。物理的な結論には使わない。
+
+model: # 計算に使うポテンシャル。名前と版は結果に記録される
+  name: mace-mp # mace-mp / emt（動作確認用）
+  size: medium
+  device: cpu
+  dtype: float64 # 緩和の力の判定を安定させるため倍精度
+
+relax:
+  optimizer: BFGS
+  fmax: 0.02 # eV/Å
+  steps: 300
+
+references: # 吸着エネルギーの参照。名前付きの手順で作る
+  pt111:
+    role: 清浄表面
+    build: {recipe: fcc111_slab, symbol: Pt, size: [2, 2, 4], a: 3.97, vacuum: 10.0, fix_layers: 2}
+  h2:
+    role: ½H2 の参照
+    build: {recipe: molecule_in_box, name: H2, box: 12}
+
+candidates: # 候補構造の生成規則
+  recipe: adsorbate_sites
+  slab: pt111
+  adsorbate: H
+  sites: {ontop: 1.6, bridge: 1.2, fcc: 1.0, hcp: 1.0} # サイト名: 初期の高さ（Å）
+  max_lateral_shift: 0.5 # 緩和で H が面内にこれ以上動いたら「サイトを移動した可能性」と警告
+
+results:
+  adsorption_energy:
+    recipe: relative_to_references
+    reference: {pt111: -1, h2: -0.5}
+    meaning: 負なら ½H2 より吸着状態が安定。最も安定なサイトと、差が 0.05 eV 以内のサイトを DFT で確かめる

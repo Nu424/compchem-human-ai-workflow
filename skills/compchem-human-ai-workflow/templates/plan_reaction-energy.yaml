@@ -1,0 +1,154 @@
+# 反応エネルギー型の計画（VASP）。題材：CO/CO2 生成、O2/H2 解離、Pt(111) への H 吸着。
+# 単位：長さ Å、エネルギー eV、力 eV/Å。
+# 指数表記は 1.0e-7 のように小数点と符号を付ける（1e-7 と書くと YAML では文字列になる）。
+
+type: reaction-energy
+purpose: >-
+  CO・CO2 の生成エネルギー、O2・H2 の解離エネルギー、Pt(111) fcc サイトへの H 吸着エネルギーを、
+  PBE の電子エネルギー差として求める（ZPE・熱補正なし）。
+
+caveats:
+  - PBE は O2 の結合を過大評価するため、O2 を参照にする生成エネルギーに系統誤差が乗る。
+  - vdW 補正なし。graphite の層間結合をほとんど表せず、格子も実験値付近で固定している。
+  - ENCUT・k 点・真空層・スラブの層数・Pt の格子定数は収束・最適化を試験していない（初回の値）。
+  - 吸着サイトは fcc だけで、他のサイトとは比べていない。
+
+resources: # Slurm の資源（クラスタに合わせて書き換える）
+  account: <your-account>  # Slurm のアカウント名（クラスタに合わせて書き換える）
+  partition: <partition>
+  qos: <qos>
+  ntasks: 24
+  time: "02:00:00"
+
+method: # 全系に共通の VASP 条件（ASE の Vasp calculator のキーワード、小文字）
+  xc: PBE
+  setups: minimal # 接尾辞なしの標準 PAW。反応式の全項で同じものを使う
+  encut: 500 # eV。O を含むので高め。収束は未試験
+  prec: Accurate
+  ediff: 1.0e-7 # SCF の収束判定（eV）。エネルギー差を見るので厳しめ
+  nelm: 200
+  algo: Normal
+  lreal: false # 小さい系なので精度を優先し、射影を逆空間で評価する
+  lasph: true # PAW 球内の非球対称成分。O や GGA で推奨
+  ismear: 0 # Gaussian スメアリング
+  sigma: 0.05 # eV
+  gamma: true # Γ 点中心の k 点メッシュ
+  isym: 0 # 分子・吸着系で対称性による拘束を避ける
+  ispin: 1 # 既定は非スピン分極。開殻の系だけ系ごとに 2 にする
+  lwave: false
+  lcharg: false
+
+steps: # 段階ごとの条件
+  relax: {ibrion: 2, nsw: 120, isif: 2, ediffg: -0.02} # 共役勾配で原子だけを緩和。最大残留力 < 0.02 eV/Å
+  static: {ibrion: -1, nsw: 0} # 緩和後の構造で 1 点計算
+
+systems:
+  co:
+    role: CO 生成エネルギーの生成物
+    build: {recipe: molecule_in_box, name: CO, box: 16}
+    steps: [relax, static]
+    params: {kpts: [1, 1, 1]}
+    expect: {distance: {atoms: [0, 1], range: [1.12, 1.16]}} # PBE で約 1.14 Å
+
+  co2:
+    role: CO2 生成エネルギーの生成物
+    build: {recipe: molecule_in_box, name: CO2, box: 16}
+    steps: [relax, static]
+    params: {kpts: [1, 1, 1]}
+
+  o2:
+    role: CO/CO2 生成と O2 解離の参照
+    build: {recipe: molecule_in_box, name: O2, box: 16}
+    steps: [relax, static]
+    magmom: [1, 1] # 各 O に初期値 1 μB（合計 2）
+    params: {kpts: [1, 1, 1], ispin: 2, nupdown: 2}
+    expect: {magmom: 2.0, distance: {atoms: [0, 1], range: [1.20, 1.26]}}
+    notes: >-
+      O2 は不対電子 2 個の三重項が基底状態なので、スピン分極（ISPIN=2）と NUPDOWN=2 で三重項に固定する。
+      非スピン分極だと約 1 eV 不安定になり、O2 を参照にするすべての量がずれる。
+
+  h2:
+    role: H2 解離と H 吸着（½H2 基準）の参照
+    build: {recipe: molecule_in_box, name: H2, box: 16}
+    steps: [relax, static]
+    params: {kpts: [1, 1, 1]}
+    expect: {distance: {atoms: [0, 1], range: [0.74, 0.76]}}
+
+  graphite:
+    role: CO/CO2 生成の炭素の参照（C4 の単位胞）
+    build: {recipe: graphite_ab, a: 2.46, c: 6.70}
+    steps: [static]
+    params: {kpts: [12, 12, 4], isym: 2} # 結晶なので密な k 点。対称性で k 点数を減らす
+    notes: >-
+      格子は実験値付近で固定。PBE は層間をほとんど結合させないので、c を最適化すると大きく伸びる。
+      炭素の参照としての誤差は caveats のとおり。
+
+  o_atom:
+    role: O2 解離の参照
+    build: {recipe: atom_in_box, symbol: O, cell: [15, 16, 17]} # 非立方体で p 軌道の縮退を破る
+    steps: [static]
+    magmom: [2]
+    params: {kpts: [1, 1, 1], ispin: 2, nupdown: 2}
+    expect: {magmom: 2.0}
+    notes: >-
+      O 原子は三重項。立方体の箱では少数スピンの p 電子が 3 つの軌道に 1/3 ずつ分数占有され、
+      基底状態より高いエネルギーになりうる。非立方体の箱で対称性を破り、OUTCAR の占有数が整数か確認する。
+
+  h_atom:
+    role: H2 解離と H 吸着（原子基準）の参照
+    build: {recipe: atom_in_box, symbol: H, cell: [15, 16, 17]}
+    steps: [static]
+    magmom: [1]
+    params: {kpts: [1, 1, 1], ispin: 2, nupdown: 1}
+    expect: {magmom: 1.0}
+
+  pt111:
+    role: H 吸着の清浄表面
+    build: {recipe: fcc111_slab, symbol: Pt, size: [2, 2, 4], a: 3.97, vacuum: 10.0, fix_layers: 2}
+    steps: [relax, static]
+    params: {kpts: [4, 4, 1], ldipol: true, idipol: 3, dipol: [0.5, 0.5, 0.5], lmaxmix: 4}
+    step_params:
+      relax: {ediff: 1.0e-6} # 緩和中の SCF は少し緩めて時間を節約
+      static: {kpts: [6, 6, 1]} # 最終エネルギーは k 点を増やして取り直す
+    notes: >-
+      清浄面と吸着面は同じ初期スラブ・同じセル・同じ条件で、独立に緩和する（差をとるため条件を揃える）。
+
+  pt111_h_fcc:
+    role: H 吸着状態（被覆率 1/4 ML）
+    build: {recipe: adsorbate_on, slab: pt111, adsorbate: H, site: fcc, height: 1.0}
+    steps: [relax, static]
+    params: {kpts: [4, 4, 1], ldipol: true, idipol: 3, dipol: [0.5, 0.5, 0.5], lmaxmix: 4}
+    step_params:
+      relax: {ediff: 1.0e-6}
+      static: {kpts: [6, 6, 1]}
+    expect: {max_displacement: 0.8} # これより大きく動いたら、サイトを移動した可能性
+    notes: >-
+      H を片面だけに置くとスラブの上下が非対称になり、周期境界をまたいで人工的な電場が生じる。
+      z 方向の双極子補正（LDIPOL, IDIPOL=3）で打ち消す。緩和後に H が fcc に留まったか上面図で確認する。
+
+results: # 求める量。recipe は recipes.py の解析の名前
+  formation_co:
+    recipe: linear_combination
+    terms: {co: 1, graphite: -0.25, o2: -0.5}
+    meaning: 負なら生成が安定
+    compare: 実験 ΔHf ≈ -1.15 eV（298 K のエンタルピーで、直接は比べられない）
+  formation_co2:
+    recipe: linear_combination
+    terms: {co2: 1, graphite: -0.25, o2: -1}
+    meaning: 負なら生成が安定
+    compare: 実験 ΔHf ≈ -4.08 eV（同上）
+  dissociation_o2:
+    recipe: linear_combination
+    terms: {o_atom: 2, o2: -1}
+    meaning: 解離に必要なエネルギー De
+    compare: PBE 文献 ≈ 6.2 eV / 実験 De ≈ 5.2 eV（目安）
+  dissociation_h2:
+    recipe: linear_combination
+    terms: {h_atom: 2, h2: -1}
+    meaning: 解離に必要なエネルギー De
+    compare: 実験 De ≈ 4.75 eV（目安）
+  adsorption_h_half_h2:
+    recipe: linear_combination
+    terms: {pt111_h_fcc: 1, pt111: -1, h2: -0.5}
+    meaning: 負なら ½H2 より吸着状態が安定
+    compare: PBE 文献で概ね -0.3〜-0.5 eV（被覆率・条件による。目安）
